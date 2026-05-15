@@ -1,0 +1,105 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - '@quanticjs/*@*'
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package to publish
+        required: true
+        type: choice
+        options:
+          - core
+      dry-run:
+        description: Dry run (skip actual publish)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm test
+
+      - name: Resolve package from tag
+        if: github.event_name == 'push'
+        id: from-tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # @quanticjs/react-core@0.1.0 → core
+          PKG=$(echo "$TAG" | sed -E 's|^@quanticjs/react-||; s|@.*||')
+          VERSION=$(echo "$TAG" | sed -E 's|.*@||')
+          echo "package=$PKG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing $PKG@$VERSION from tag $TAG"
+
+      - name: Resolve package from input
+        if: github.event_name == 'workflow_dispatch'
+        id: from-input
+        run: |
+          PKG="${{ inputs.package }}"
+          VERSION=$(node -p "require('./packages/$PKG/package.json').version")
+          echo "package=$PKG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing $PKG@$VERSION from manual dispatch"
+
+      - name: Set resolved values
+        id: resolved
+        run: |
+          echo "package=${{ steps.from-tag.outputs.package || steps.from-input.outputs.package }}" >> "$GITHUB_OUTPUT"
+          echo "version=${{ steps.from-tag.outputs.version || steps.from-input.outputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify version matches package.json
+        if: github.event_name == 'push'
+        run: |
+          PKG="${{ steps.resolved.outputs.package }}"
+          EXPECTED="${{ steps.resolved.outputs.version }}"
+          ACTUAL=$(node -p "require('./packages/$PKG/package.json').version")
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::Tag version ($EXPECTED) does not match package.json ($ACTUAL)"
+            exit 1
+          fi
+
+      - name: Publish
+        working-directory: packages/${{ steps.resolved.outputs.package }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry-run }}" = "true" ]; then
+            echo "Dry run — skipping publish"
+            pnpm publish --dry-run --no-git-checks
+          else
+            pnpm publish --no-git-checks --provenance
+          fi
+
+      - name: Summary
+        run: |
+          PKG="${{ steps.resolved.outputs.package }}"
+          VERSION="${{ steps.resolved.outputs.version }}"
+          echo "### Published @quanticjs/react-${PKG}@${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ inputs.dry-run }}" = "true" ]; then
+            echo "_Dry run — not actually published_" >> "$GITHUB_STEP_SUMMARY"
+          fi
