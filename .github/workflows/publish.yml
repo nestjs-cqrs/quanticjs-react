@@ -92,7 +92,7 @@ jobs:
             echo "Dry run — skipping publish"
             pnpm publish --dry-run --no-git-checks
           else
-            pnpm publish --no-git-checks --provenance
+            pnpm publish --no-git-checks
           fi
 
       - name: Summary
