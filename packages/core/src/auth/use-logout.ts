@@ -25,8 +25,19 @@ export function useLogout(options?: UseLogoutOptions) {
     }
     setIsLoggingOut(true);
     fetch(logoutUrl, { method: 'POST', credentials: 'include' })
-      .catch(() => {})
-      .finally(() => {
+      .then(async (res) => {
+        try {
+          const data = await res.json() as { endSessionUrl?: string };
+          if (data.endSessionUrl) {
+            window.location.href = data.endSessionUrl;
+            return;
+          }
+        } catch {
+          // response not JSON — fall through to default redirect
+        }
+        window.location.href = redirectUrl;
+      })
+      .catch(() => {
         window.location.href = redirectUrl;
       });
   }, [logoutUrl, redirectUrl, confirmOpt]);
