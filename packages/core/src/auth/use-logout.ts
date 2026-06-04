@@ -3,13 +3,22 @@ import { useState, useCallback } from 'react';
 export interface UseLogoutOptions {
   logoutUrl?: string;
   redirectUrl?: string;
+  csrfCookieName?: string;
   confirm?: boolean | string;
+}
+
+function readCsrfToken(cookieName: string): string | undefined {
+  const match = document.cookie.match(
+    new RegExp(`(?:^|;\\s*)${cookieName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]+)`),
+  );
+  return match?.[1];
 }
 
 export function useLogout(options?: UseLogoutOptions) {
   const {
-    logoutUrl = '/auth/logout',
-    redirectUrl = '/auth/login',
+    logoutUrl = '/api/auth/logout',
+    redirectUrl = '/api/auth/login',
+    csrfCookieName = 'csrf',
     confirm: confirmOpt = false,
   } = options ?? {};
 
@@ -24,10 +33,16 @@ export function useLogout(options?: UseLogoutOptions) {
       if (!window.confirm(message)) return;
     }
     setIsLoggingOut(true);
-    fetch(logoutUrl, { method: 'POST', credentials: 'include' })
+
+    const headers: Record<string, string> = {};
+    const csrf =
+      readCsrfToken(csrfCookieName) ?? readCsrfToken('__Host-csrf');
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+
+    fetch(logoutUrl, { method: 'POST', credentials: 'include', headers })
       .then(async (res) => {
         try {
-          const data = await res.json() as { endSessionUrl?: string };
+          const data = (await res.json()) as { endSessionUrl?: string };
           if (data.endSessionUrl) {
             window.location.href = data.endSessionUrl;
             return;
@@ -40,7 +55,7 @@ export function useLogout(options?: UseLogoutOptions) {
       .catch(() => {
         window.location.href = redirectUrl;
       });
-  }, [logoutUrl, redirectUrl, confirmOpt]);
+  }, [logoutUrl, redirectUrl, csrfCookieName, confirmOpt]);
 
   return { logout, isLoggingOut };
 }
